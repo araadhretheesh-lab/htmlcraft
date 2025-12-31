@@ -14,10 +14,10 @@ document.body.appendChild(renderer.domElement);
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 
 // --- 2. Terrain Data & Optimization ---
-const worldSize = 32; // Increased size because we are optimized now!
-const worldData = {}; // Stores block types at [x,y,z]
+const worldSize = 32; 
+const worldData = {}; 
 
-// Generate height map data first
+// Step A: Generate the raw data (The "Blueprint")
 for (let x = 0; x < worldSize; x++) {
     for (let z = 0; z < worldSize; z++) {
         const noiseValue = noise2D(x / 15, z / 15);
@@ -28,17 +28,16 @@ for (let x = 0; x < worldSize; x++) {
     }
 }
 
-// --- 3. Optimized Mesh Building ---
+// Step B: Build the Mesh (The "Graphics")
 const geometry = new THREE.BoxGeometry(1, 1, 1);
 const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d9e3d });
 const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
 const worldBlocks = [];
 
-// Only render blocks that are "Exposed" to air
 for (const key in worldData) {
     const [x, y, z] = key.split(',').map(Number);
     
-    // Check if block is completely surrounded (Face Culling)
+    // Neighbor Check (Face Culling)
     const hasAbove = worldData[`${x},${y+1},${z}`];
     const hasBelow = worldData[`${x},${y-1},${z}`];
     const hasLeft  = worldData[`${x-1},${y},${z}`];
@@ -46,6 +45,7 @@ for (const key in worldData) {
     const hasFront = worldData[`${x},${y},${z+1}`];
     const hasBack  = worldData[`${x},${y},${z-1}`];
 
+    // Only draw the block if at least one side is touching air
     const isExposed = !hasAbove || !hasBelow || !hasLeft || !hasRight || !hasFront || !hasBack;
 
     if (isExposed) {
@@ -54,12 +54,13 @@ for (const key in worldData) {
         block.position.set(x, y, z);
         scene.add(block);
         
-        // Save for collision
-        worldBlocks.push(new THREE.Box3().setFromObject(block));
+        // Save for collision engine
+        const box = new THREE.Box3().setFromObject(block);
+        worldBlocks.push(box);
     }
 }
 
-// --- 4. Player Physics (The Standard Way) ---
+// --- 3. Physics & Controls ---
 const player = {
     pos: new THREE.Vector3(worldSize/2, 15, worldSize/2),
     vel: new THREE.Vector3(0, 0, 0),
