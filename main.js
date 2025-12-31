@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 
 // --- 1. Setup ---
-const noise2D = createNoise2D(); // Returns the noise function directly
+const noise2D = createNoise2D();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -14,59 +14,78 @@ document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 
-// --- 2. Terrain Data & Face Culling Optimization ---
-const worldSize = 32; 
-const worldData = {}; 
+// --- 2. Chunk Management System ---
+const CHUNK_SIZE = 16;
+const RENDER_DISTANCE = 3; // Number of chunks around player
+const chunks = new Map(); // Key: "x,z", Value: THREE.Group
+const worldData = {};    // Key: "x,y,z", Value: type
 
-// Step A: Generate the raw data (The "Blueprint")
-for (let x = 0; x < worldSize; x++) {
-    for (let z = 0; z < worldSize; z++) {
-        // Divide by 15-20 to get smooth, rolling hills
-        const noiseValue = noise2D(x / 15, z / 15);
-        const height = Math.floor(noiseValue * 5) + 5;
-        for (let y = 0; y <= height; y++) {
-            worldData[`${x},${y},${z}`] = (y === height) ? 'grass' : 'dirt';
+const geometry = new THREE.BoxGeometry(1, 1, 1);
+const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d9e3d });
+const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+
+function getChunkCoords(x, z) {
+    return {
+        cx: Math.floor(x / CHUNK_SIZE),
+        cz: Math.floor(z / CHUNK_SIZE)
+    };
+}
+
+function generateChunk(cx, cz) {
+    const chunkKey = `${cx},${cz}`;
+    if (chunks.has(chunkKey)) return;
+
+    const chunkGroup = new THREE.Group();
+    
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            const worldX = cx * CHUNK_SIZE + x;
+            const worldZ = cz * CHUNK_SIZE + z;
+            
+            // Terrain noise
+            const noiseValue = noise2D(worldX / 20, worldZ / 20);
+            const height = Math.floor(noiseValue * 5) + 5;
+
+            for (let y = 0; y <= height; y++) {
+                worldData[`${worldX},${y},${worldZ}`] = (y === height) ? 'grass' : 'dirt';
+            }
+
+            // Render logic (simplified face culling for performance)
+            const y = height; 
+            const block = new THREE.Mesh(geometry, grassMat);
+            block.position.set(worldX, y, worldZ);
+            chunkGroup.add(block);
+        }
+    }
+
+    scene.add(chunkGroup);
+    chunks.set(chunkKey, chunkGroup);
+}
+
+function updateChunks(playerX, playerZ) {
+    const { cx, cz } = getChunkCoords(playerX, playerZ);
+
+    // Load new chunks
+    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
+        for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
+            generateChunk(cx + x, cz + z);
+        }
+    }
+
+    // Unload far chunks
+    for (const [key, group] of chunks) {
+        const [ccx, ccz] = key.split(',').map(Number);
+        if (Math.abs(ccx - cx) > RENDER_DISTANCE || Math.abs(ccz - cz) > RENDER_DISTANCE) {
+            scene.remove(group);
+            chunks.delete(key);
         }
     }
 }
 
-// Step B: Build the Mesh (The "Graphics")
-const geometry = new THREE.BoxGeometry(1, 1, 1);
-const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d9e3d });
-const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
-const worldBlocks = [];
-
-for (const key in worldData) {
-    const [x, y, z] = key.split(',').map(Number);
-    
-    // Neighbor Check for Optimization (Face Culling)
-    const hasAbove = worldData[`${x},${y+1},${z}`];
-    const hasBelow = worldData[`${x},${y-1},${z}`];
-    const hasLeft  = worldData[`${x-1},${y},${z}`];
-    const hasRight = worldData[`${x+1},${y},${z}`];
-    const hasFront = worldData[`${x},${y},${z+1}`];
-    const hasBack  = worldData[`${x},${y},${z-1}`];
-
-    // Only draw the block if at least one side is touching air (exposed)
-    const isExposed = !hasAbove || !hasBelow || !hasLeft || !hasRight || !hasFront || !hasBack;
-
-    if (isExposed) {
-        const type = worldData[key];
-        const block = new THREE.Mesh(geometry, type === 'grass' ? grassMat : dirtMat);
-        block.position.set(x, y, z);
-        scene.add(block);
-        
-        // Add to collision list
-        worldBlocks.push(new THREE.Box3().setFromObject(block));
-    }
-}
-
-// --- 3. Player Physics & Controls ---
+// --- 3. Player Physics & Loop ---
 const player = {
-    pos: new THREE.Vector3(worldSize/2, 15, worldSize/2),
+    pos: new THREE.Vector3(8, 20, 8),
     vel: new THREE.Vector3(0, 0, 0),
-    width: 0.5,
-    height: 1.8,
     onGround: false
 };
 
@@ -75,7 +94,7 @@ window.addEventListener('keydown', (e) => keys[e.code] = true);
 window.addEventListener('keyup', (e) => keys[e.code] = false);
 window.addEventListener('mousedown', () => document.body.requestPointerLock());
 
-let pitch = 0, yaw = 0;
+let yaw = 0, pitch = 0;
 window.addEventListener('mousemove', (e) => {
     if (document.pointerLockElement) {
         yaw -= e.movementX * 0.002;
@@ -85,55 +104,41 @@ window.addEventListener('mousemove', (e) => {
     }
 });
 
-function checkCollision(newPos) {
-    const playerBox = new THREE.Box3().setFromCenterAndSize(
-        newPos, 
-        new THREE.Vector3(player.width, player.height, player.width)
-    );
-    for (let box of worldBlocks) {
-        if (playerBox.intersectsBox(box)) return true;
-    }
-    return false;
-}
-
 function updatePhysics() {
-    const speed = 0.12;
-    const gravity = -0.015;
-    const jumpStrength = 0.25;
-
+    const speed = 0.15;
+    const gravity = -0.01;
+    
+    // Movement
     let moveX = 0, moveZ = 0;
     if (keys['KeyW']) moveZ -= 1;
     if (keys['KeyS']) moveZ += 1;
     if (keys['KeyA']) moveX -= 1;
     if (keys['KeyD']) moveX += 1;
 
-    const direction = new THREE.Vector3(moveX, 0, moveZ).applyQuaternion(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), yaw)).normalize();
-    player.vel.x = direction.x * speed;
-    player.vel.z = direction.z * speed;
+    const moveDir = new THREE.Vector3(moveX, 0, moveZ)
+        .applyAxisAngle(new THREE.Vector3(0,1,0), yaw)
+        .normalize()
+        .multiplyScalar(speed);
 
+    player.pos.add(moveDir);
     player.vel.y += gravity;
+    player.pos.y += player.vel.y;
+
+    // Floor collision (Simple)
+    const floorY = 10; // Placeholder for real collision logic
+    if (player.pos.y < floorY) {
+        player.pos.y = floorY;
+        player.vel.y = 0;
+        player.onGround = true;
+    }
+
     if (keys['Space'] && player.onGround) {
-        player.vel.y = jumpStrength;
+        player.vel.y = 0.2;
         player.onGround = false;
     }
 
-    // Solve Collisions axis by axis to prevent sticking
-    player.pos.x += player.vel.x;
-    if (checkCollision(player.pos)) player.pos.x -= player.vel.x;
-    
-    player.pos.z += player.vel.z;
-    if (checkCollision(player.pos)) player.pos.z -= player.vel.z;
-
-    player.pos.y += player.vel.y;
-    player.onGround = false;
-    if (checkCollision(player.pos)) {
-        if (player.vel.y < 0) player.onGround = true;
-        player.pos.y -= player.vel.y;
-        player.vel.y = 0;
-    }
-
     camera.position.copy(player.pos);
-    camera.position.y += 0.7; // Eye level
+    updateChunks(player.pos.x, player.pos.z);
 }
 
 function animate() {
@@ -142,9 +147,3 @@ function animate() {
     renderer.render(scene, camera);
 }
 animate();
-
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
