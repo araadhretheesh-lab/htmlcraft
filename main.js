@@ -1,8 +1,8 @@
 import * as THREE from 'three';
-import { makeNoise2D } from 'simplex-noise';
+import { createNoise2D } from 'simplex-noise';
 
 // --- 1. Setup ---
-const noise2D = makeNoise2D();
+const noise2D = createNoise2D(); // Returns the noise function directly
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -14,15 +14,15 @@ document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 
-// --- 2. Terrain Data & Optimization ---
+// --- 2. Terrain Data & Face Culling Optimization ---
 const worldSize = 32; 
 const worldData = {}; 
 
-// Generate Data
+// Step A: Generate the raw data (The "Blueprint")
 for (let x = 0; x < worldSize; x++) {
     for (let z = 0; z < worldSize; z++) {
-        // Divide by 20 to make the terrain even smoother/flatter
-        const noiseValue = noise2D(x / 20, z / 20);
+        // Divide by 15-20 to get smooth, rolling hills
+        const noiseValue = noise2D(x / 15, z / 15);
         const height = Math.floor(noiseValue * 5) + 5;
         for (let y = 0; y <= height; y++) {
             worldData[`${x},${y},${z}`] = (y === height) ? 'grass' : 'dirt';
@@ -30,7 +30,7 @@ for (let x = 0; x < worldSize; x++) {
     }
 }
 
-// Build Mesh with Face Culling
+// Step B: Build the Mesh (The "Graphics")
 const geometry = new THREE.BoxGeometry(1, 1, 1);
 const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d9e3d });
 const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
@@ -39,7 +39,7 @@ const worldBlocks = [];
 for (const key in worldData) {
     const [x, y, z] = key.split(',').map(Number);
     
-    // Check neighbors
+    // Neighbor Check for Optimization (Face Culling)
     const hasAbove = worldData[`${x},${y+1},${z}`];
     const hasBelow = worldData[`${x},${y-1},${z}`];
     const hasLeft  = worldData[`${x-1},${y},${z}`];
@@ -47,17 +47,21 @@ for (const key in worldData) {
     const hasFront = worldData[`${x},${y},${z+1}`];
     const hasBack  = worldData[`${x},${y},${z-1}`];
 
-    // Face Culling: Only draw if exposed to air
-    if (!hasAbove || !hasBelow || !hasLeft || !hasRight || !hasFront || !hasBack) {
+    // Only draw the block if at least one side is touching air (exposed)
+    const isExposed = !hasAbove || !hasBelow || !hasLeft || !hasRight || !hasFront || !hasBack;
+
+    if (isExposed) {
         const type = worldData[key];
         const block = new THREE.Mesh(geometry, type === 'grass' ? grassMat : dirtMat);
         block.position.set(x, y, z);
         scene.add(block);
+        
+        // Add to collision list
         worldBlocks.push(new THREE.Box3().setFromObject(block));
     }
 }
 
-// --- 3. Physics & Controls ---
+// --- 3. Player Physics & Controls ---
 const player = {
     pos: new THREE.Vector3(worldSize/2, 15, worldSize/2),
     vel: new THREE.Vector3(0, 0, 0),
@@ -113,6 +117,7 @@ function updatePhysics() {
         player.onGround = false;
     }
 
+    // Solve Collisions axis by axis to prevent sticking
     player.pos.x += player.vel.x;
     if (checkCollision(player.pos)) player.pos.x -= player.vel.x;
     
@@ -128,7 +133,7 @@ function updatePhysics() {
     }
 
     camera.position.copy(player.pos);
-    camera.position.y += 0.7; 
+    camera.position.y += 0.7; // Eye level
 }
 
 function animate() {
