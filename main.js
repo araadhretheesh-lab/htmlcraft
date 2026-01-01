@@ -19,10 +19,10 @@ const light = new THREE.DirectionalLight(0xffffff, 1);
 light.position.set(5, 10, 7);
 scene.add(light, new THREE.AmbientLight(0xffffff, 0.5));
 
-// --- 2. Voxel Data & Mesh Logic ---
+// --- 2. World Data ---
 const CHUNK_SIZE = 16;
 const worldData = new Map();
-const getBlock = (x, y, z) => worldData.get(`${x},${y},${z}`);
+const getBlock = (x, y, z) => worldData.get(`${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`);
 
 function buildChunkMesh(cx, cz) {
     const positions = [];
@@ -30,37 +30,32 @@ function buildChunkMesh(cx, cz) {
     const indices = [];
     let vertexCount = 0;
 
-    // 1. Generate local data
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = cx * CHUNK_SIZE + x;
             const worldZ = cz * CHUNK_SIZE + z;
             const height = Math.floor(noise2D(worldX / 24, worldZ / 24) * 8) + 10;
-            
             for (let y = 0; y <= height; y++) {
                 worldData.set(`${worldX},${y},${worldZ}`, y === height ? 1 : 2);
             }
         }
     }
 
-    // 2. Build geometry (Face Culling)
+    // Rendering logic (Face Culling)
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = cx * CHUNK_SIZE + x;
             const worldZ = cz * CHUNK_SIZE + z;
-            
-            for (let y = 0; y < 25; y++) {
+            for (let y = 0; y < 30; y++) {
                 if (!getBlock(worldX, y, worldZ)) continue;
-
                 const neighbors = [
-                    { dir: [0, 1, 0], n: [0, 1, 0], corners: [[0,1,1], [1,1,1], [0,1,0], [1,1,0]] }, // Top
-                    { dir: [0, -1, 0], n: [0, -1, 0], corners: [[0,0,0], [1,0,0], [0,0,1], [1,0,1]] }, // Bottom
-                    { dir: [1, 0, 0], n: [1, 0, 0], corners: [[1,0,1], [1,0,0], [1,1,1], [1,1,0]] }, // Right
-                    { dir: [-1, 0, 0], n: [-1, 0, 0], corners: [[0,0,0], [0,0,1], [0,1,0], [0,1,1]] }, // Left
-                    { dir: [0, 0, 1], n: [0, 0, 1], corners: [[0,0,1], [1,0,1], [0,1,1], [1,1,1]] }, // Front
-                    { dir: [0, 0, -1], n: [0, 0, -1], corners: [[1,0,0], [0,0,0], [1,1,0], [0,1,0]] }, // Back
+                    { dir: [0, 1, 0], n: [0, 1, 0], corners: [[0,1,1], [1,1,1], [0,1,0], [1,1,0]] }, 
+                    { dir: [0, -1, 0], n: [0, -1, 0], corners: [[0,0,0], [1,0,0], [0,0,1], [1,0,1]] },
+                    { dir: [1, 0, 0], n: [1, 0, 0], corners: [[1,0,1], [1,0,0], [1,1,1], [1,1,0]] },
+                    { dir: [-1, 0, 0], n: [-1, 0, 0], corners: [[0,0,0], [0,0,1], [0,1,0], [0,1,1]] },
+                    { dir: [0, 0, 1], n: [0, 0, 1], corners: [[0,0,1], [1,0,1], [0,1,1], [1,1,1]] },
+                    { dir: [0, 0, -1], n: [0, 0, -1], corners: [[1,0,0], [0,0,0], [1,1,0], [0,1,0]] },
                 ];
-
                 for (const { dir, n, corners } of neighbors) {
                     if (!getBlock(worldX + dir[0], y + dir[1], worldZ + dir[2])) {
                         corners.forEach(c => {
@@ -74,30 +69,32 @@ function buildChunkMesh(cx, cz) {
             }
         }
     }
-
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     geometry.setIndex(indices);
-    
-    const material = new THREE.MeshStandardMaterial({ color: 0x55aa55 });
-    scene.add(new THREE.Mesh(geometry, material));
+    scene.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x55aa55 })));
 }
 
-// Generate starting area
 for(let x = -2; x <= 2; x++) for(let z = -2; z <= 2; z++) buildChunkMesh(x, z);
 
-// --- 3. PointerLock & Controls ---
-const player = { pos: new THREE.Vector3(8, 25, 8), velocity: new THREE.Vector3() };
-const keys = {};
+// --- 3. Better Physics & Controls ---
+const player = {
+    pos: new THREE.Vector3(8, 30, 8),
+    vel: new THREE.Vector3(0, 0, 0),
+    height: 1.8,
+    radius: 0.4,
+    onGround: false
+};
 
+const keys = {};
+document.addEventListener('mousedown', () => renderer.domElement.requestPointerLock());
 document.addEventListener('keydown', (e) => keys[e.code] = true);
 document.addEventListener('keyup', (e) => keys[e.code] = false);
-document.addEventListener('mousedown', () => document.body.requestPointerLock());
 
 let yaw = 0, pitch = 0;
 document.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement) {
+    if (document.pointerLockElement === renderer.domElement) {
         yaw -= e.movementX * 0.002;
         pitch -= e.movementY * 0.002;
         pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
@@ -105,33 +102,62 @@ document.addEventListener('mousemove', (e) => {
     }
 });
 
-// --- 4. Game Loop ---
-function animate() {
-    requestAnimationFrame(animate);
+function updatePhysics() {
+    const gravity = -0.012;
+    const jumpPower = 0.2;
+    const speed = 0.12;
 
-    if (document.pointerLockElement) {
-        const speed = 0.15;
-        const move = new THREE.Vector3();
-        if (keys['KeyW']) move.z -= 1;
-        if (keys['KeyS']) move.z += 1;
-        if (keys['KeyA']) move.x -= 1;
-        if (keys['KeyD']) move.x += 1;
+    // Apply Gravity
+    player.vel.y += gravity;
 
-        move.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).normalize().multiplyScalar(speed);
-        player.pos.add(move);
+    // Movement Direction
+    const moveDir = new THREE.Vector3();
+    if (keys['KeyW']) moveDir.z -= 1;
+    if (keys['KeyS']) moveDir.z += 1;
+    if (keys['KeyA']) moveDir.x -= 1;
+    if (keys['KeyD']) moveDir.x += 1;
+    moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).normalize().multiplyScalar(speed);
 
-        // Simple Ground Follow
-        const heightAtPos = Math.floor(noise2D(player.pos.x / 24, player.pos.z / 24) * 8) + 12;
-        player.pos.y = heightAtPos;
+    // X Movement & Collision
+    player.pos.x += moveDir.x;
+    if (getBlock(player.pos.x + (moveDir.x > 0 ? 0.4 : -0.4), player.pos.y - 1, player.pos.z)) {
+        player.pos.x -= moveDir.x;
     }
 
+    // Z Movement & Collision
+    player.pos.z += moveDir.z;
+    if (getBlock(player.pos.x, player.pos.y - 1, player.pos.z + (moveDir.z > 0 ? 0.4 : -0.4))) {
+        player.pos.z -= moveDir.z;
+    }
+
+    // Y Movement & Floor Collision
+    player.pos.y += player.vel.y;
+    const groundHeight = Math.floor(noise2D(player.pos.x / 24, player.pos.z / 24) * 8) + 11;
+    
+    if (player.pos.y < groundHeight) {
+        player.pos.y = groundHeight;
+        player.vel.y = 0;
+        player.onGround = true;
+    } else {
+        player.onGround = false;
+    }
+
+    // Jump
+    if (keys['Space'] && player.onGround) {
+        player.vel.y = jumpPower;
+        player.onGround = false;
+    }
+
+    // Eye Height: Set camera to top of player height
     camera.position.copy(player.pos);
+    camera.position.y += 0.7; // Offsets camera from the "feet" position
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    if (document.pointerLockElement === renderer.domElement) {
+        updatePhysics();
+    }
     renderer.render(scene, camera);
 }
 animate();
-
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-});
