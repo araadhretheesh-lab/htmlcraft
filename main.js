@@ -104,13 +104,14 @@ document.addEventListener('mousemove', (e) => {
 
 function updatePhysics() {
     const gravity = -0.012;
-    const jumpPower = 0.2;
+    const jumpPower = 0.22;
     const speed = 0.12;
+    const playerHeight = 1.8; // Standard height
 
-    // Apply Gravity
+    // 1. Apply Gravity
     player.vel.y += gravity;
 
-    // Movement Direction
+    // 2. Horizontal Movement
     const moveDir = new THREE.Vector3();
     if (keys['KeyW']) moveDir.z -= 1;
     if (keys['KeyS']) moveDir.z += 1;
@@ -118,40 +119,52 @@ function updatePhysics() {
     if (keys['KeyD']) moveDir.x += 1;
     moveDir.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).normalize().multiplyScalar(speed);
 
-    // X Movement & Collision
-    player.pos.x += moveDir.x;
-    if (getBlock(player.pos.x + (moveDir.x > 0 ? 0.4 : -0.4), player.pos.y - 1, player.pos.z)) {
-        player.pos.x -= moveDir.x;
-    }
-
-    // Z Movement & Collision
-    player.pos.z += moveDir.z;
-    if (getBlock(player.pos.x, player.pos.y - 1, player.pos.z + (moveDir.z > 0 ? 0.4 : -0.4))) {
-        player.pos.z -= moveDir.z;
-    }
-
-    // Y Movement & Floor Collision
-    player.pos.y += player.vel.y;
-    const groundHeight = Math.floor(noise2D(player.pos.x / 24, player.pos.z / 24) * 8) + 11;
+    // 3. X & Z Collision (Wall sliding)
+    let nextX = player.pos.x + moveDir.x;
+    let nextZ = player.pos.z + moveDir.z;
     
-    if (player.pos.y < groundHeight) {
-        player.pos.y = groundHeight;
+    // Check at "Eye Level" and "Foot Level" to prevent walking through walls
+    const isWallX = getBlock(nextX + (moveDir.x > 0 ? 0.3 : -0.3), player.pos.y, player.pos.z) || 
+                    getBlock(nextX + (moveDir.x > 0 ? 0.3 : -0.3), player.pos.y - 1, player.pos.z);
+    
+    if (!isWallX) player.pos.x = nextX;
+
+    const isWallZ = getBlock(player.pos.x, player.pos.y, nextZ + (moveDir.z > 0 ? 0.3 : -0.3)) ||
+                    getBlock(player.pos.x, player.pos.y - 1, nextZ + (moveDir.z > 0 ? 0.3 : -0.3));
+    
+    if (!isWallZ) player.pos.z = nextZ;
+
+    // 4. Vertical Movement (Gravity & Jumping)
+    player.pos.y += player.vel.y;
+
+    // 5. Floor Collision
+    const currentGround = Math.floor(noise2D(player.pos.x / 24, player.pos.z / 24) * 8) + 11;
+    
+    if (player.pos.y < currentGround + playerHeight) {
+        player.pos.y = currentGround + playerHeight;
         player.vel.y = 0;
         player.onGround = true;
     } else {
         player.onGround = false;
     }
 
-    // Jump
+    // 6. Ceiling Check (The "Glue Trap" fix)
+    // If our head hits a block above us, stop upward velocity
+    if (getBlock(player.pos.x, player.pos.y + 0.1, player.pos.z)) {
+        player.vel.y = Math.min(0, player.vel.y);
+    }
+
+    // 7. Jump Logic
     if (keys['Space'] && player.onGround) {
         player.vel.y = jumpPower;
         player.onGround = false;
     }
 
-    // Eye Height: Set camera to top of player height
-    camera.position.copy(player.pos);
-    camera.position.y += 0.7; // Offsets camera from the "feet" position
-}
+    // 8. Camera Placement (Eye Level)
+    camera.position.x = player.pos.x;
+    camera.position.y = player.pos.y - 0.2; // Eyes are slightly below the very top of the head
+    camera.position.z = player.pos.z;
+}}
 
 function animate() {
     requestAnimationFrame(animate);
