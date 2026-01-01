@@ -1,39 +1,44 @@
 import * as THREE from 'three';
-import { Player } from './Player.js';
 import { World } from './World.js';
+import { Player } from './Player.js';
 
-// --- Scene Setup ---
+// --- 1. Command Center Initialization ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
-
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: false });
+camera.rotation.order = 'YXZ';
+
+const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const light = new THREE.DirectionalLight(0xffffff, 1);
-light.position.set(5, 10, 7);
-scene.add(light, new THREE.AmbientLight(0xffffff, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.position.set(5, 10, 7);
+scene.add(sun, new THREE.AmbientLight(0xffffff, 0.5));
 
-// --- Initialize Modules ---
+// --- 2. Module Instances ---
 const world = new World(scene);
-const player = new Player(camera, world.noise2D);
+const player = new Player(camera);
 
-// Initial World Load
+// Generate initial world
 for(let x = -2; x <= 2; x++) {
     for(let z = -2; z <= 2; z++) {
-        world.buildChunkMesh(x, z);
+        world.generateChunk(x, z);
     }
 }
 
-// --- Main Loop ---
+// --- 3. Pointer Lock Request (Command Center Task) ---
+document.addEventListener('mousedown', () => {
+    renderer.domElement.requestPointerLock();
+});
+
+// --- 4. The Heartbeat (Main Loop) ---
 function animate() {
     requestAnimationFrame(animate);
 
-    if (document.pointerLockElement) {
-        // Player needs to check against world data for collisions
-        player.update(world.worldData);
+    if (document.pointerLockElement === renderer.domElement) {
+        // Send a message to the player to update itself using world data
+        player.update(world);
     }
 
     renderer.render(scene, camera);
