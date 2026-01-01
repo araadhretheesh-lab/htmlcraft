@@ -8,7 +8,7 @@ export class World {
         this.worldData = new Map();
         this.chunks = new Map();
         this.CHUNK_SIZE = 16;
-        this.RENDER_DISTANCE = 3; // Number of chunks in every direction
+        this.RENDER_DISTANCE = 3; 
         this.material = new THREE.MeshStandardMaterial({ color: 0x55aa55 });
     }
 
@@ -16,25 +16,24 @@ export class World {
         return this.worldData.get(`${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`);
     }
 
+    // This is the function main.js needs to call
     update(playerX, playerZ) {
         const pCX = Math.floor(playerX / this.CHUNK_SIZE);
         const pCZ = Math.floor(playerZ / this.CHUNK_SIZE);
 
-        // 1. Generate new chunks around the player
         for (let x = -this.RENDER_DISTANCE; x <= this.RENDER_DISTANCE; x++) {
             for (let z = -this.RENDER_DISTANCE; z <= this.RENDER_DISTANCE; z++) {
                 this.buildChunkMesh(pCX + x, pCZ + z);
             }
         }
 
-        // 2. Garbage Collection: Remove far chunks
+        // Cleanup far chunks
         for (const [key, mesh] of this.chunks) {
             const [cx, cz] = key.split(',').map(Number);
             if (Math.abs(cx - pCX) > this.RENDER_DISTANCE || Math.abs(cz - pCZ) > this.RENDER_DISTANCE) {
                 this.scene.remove(mesh);
-                mesh.geometry.dispose(); // CRITICAL: Frees GPU memory
+                mesh.geometry.dispose();
                 this.chunks.delete(key);
-                // Optional: Clean worldData map here for absolute infinite play
             }
         }
     }
@@ -43,12 +42,7 @@ export class World {
         const chunkKey = `${cx},${cz}`;
         if (this.chunks.has(chunkKey)) return;
 
-        const positions = [];
-        const normals = [];
-        const indices = [];
-        let vertexCount = 0;
-
-        // Generate Data (Only if it doesn't exist)
+        // Data Generation logic...
         for (let x = 0; x < this.CHUNK_SIZE; x++) {
             for (let z = 0; z < this.CHUNK_SIZE; z++) {
                 const worldX = cx * this.CHUNK_SIZE + x;
@@ -62,7 +56,12 @@ export class World {
             }
         }
 
-        // Generate Mesh with Face Culling
+        // Mesh building logic (Face Culling)
+        const positions = [];
+        const normals = [];
+        const indices = [];
+        let vertexCount = 0;
+
         for (let x = 0; x < this.CHUNK_SIZE; x++) {
             for (let z = 0; z < this.CHUNK_SIZE; z++) {
                 const worldX = cx * this.CHUNK_SIZE + x;
