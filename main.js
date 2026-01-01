@@ -33,12 +33,16 @@ document.addEventListener('mousedown', () => {
 });
 
 // --- 4. The Heartbeat (Main Loop) ---
+// ... existing imports and scene setup ...
+
 function animate() {
     requestAnimationFrame(animate);
 
     if (document.pointerLockElement === renderer.domElement) {
-        // Send a message to the player to update itself using world data
         player.update(world);
+        
+        // Command Center tells the world to update chunks based on player position
+        world.update(player.pos.x, player.pos.z);
     }
 
     renderer.render(scene, camera);
