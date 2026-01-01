@@ -5,63 +5,62 @@ import { Player } from './Player.js';
 // --- 1. Scene & Renderer Setup ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-scene.fog = new THREE.Fog(0x87CEEB, 20, 100);
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.rotation.order = 'YXZ'; // Important for Minecraft-style looking
+// Fog is important for the "Subtle" transition you wanted
+// It hides chunks popping in at the 18-billion block mark
+scene.fog = new THREE.Fog(0x87CEEB, 20, 80);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
-renderer.setPixelRatio(1); // Performance boost
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+camera.rotation.order = 'YXZ'; 
+
+const renderer = new THREE.WebGLRenderer({ 
+    antialias: false,
+    powerPreference: "high-performance" 
+});
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 // --- 2. Lighting ---
-const sun = new THREE.DirectionalLight(0xffffff, 1);
-sun.position.set(5, 10, 7);
-scene.add(sun, new THREE.AmbientLight(0xffffff, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+sun.position.set(50, 100, 50);
+scene.add(sun, new THREE.AmbientLight(0xffffff, 0.4));
 
 // --- 3. Module Instances ---
+// World.js now manages TerrainGenerator and ChunkBuilder internally
 const world = new World(scene);
 const player = new Player(camera);
 
-// Build initial starting area (around 0,0)
-for (let x = -2; x <= 2; x++) {
-    for (let z = -2; z <= 2; z++) {
-        world.buildChunkMesh(x, z);
-    }
-}
-
-// --- 4. Pointer Lock (The "Command" to lock the mouse) ---
+// --- 4. Input & Pointer Lock ---
 document.addEventListener('mousedown', () => {
-    // We request the lock on the game canvas
-    renderer.domElement.requestPointerLock();
+    if (document.pointerLockElement !== renderer.domElement) {
+        renderer.domElement.requestPointerLock();
+    }
 });
 
-// Optional: Error logging for Pointer Lock
-document.addEventListener('pointerlockerror', () => {
-    console.error("Pointer Lock failed. Ensure you clicked the game window.");
-});
-
-// --- 5. The Main Loop (The Heartbeat) ---
+// --- 5. The Command Center (Main Loop) ---
 function animate() {
     requestAnimationFrame(animate);
 
-    // Only update game logic if the mouse is locked
+    // Only run logic if the game is active/focused
     if (document.pointerLockElement === renderer.domElement) {
-        // 1. Tell player to move and check collisions
+        
+        // Step 1: Update Player (Physics, Movement, Collision)
+        // We pass 'world' so the player can check heights for floor collision
         player.update(world);
         
-        // 2. Tell world to update infinite chunks based on player location
+        // Step 2: Update World (Super-Chunk Tagging & Infinite Generation)
+        // This handles the 480x480 logic and building chunks via the builder
         world.update(player.pos.x, player.pos.z);
     }
 
     renderer.render(scene, camera);
 }
 
-// Start the game
+// Start the engine
 animate();
 
-// --- 6. Handle Window Resize ---
+// --- 6. Window Management ---
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
