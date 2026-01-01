@@ -5,145 +5,96 @@ import { createNoise2D } from 'simplex-noise';
 const noise2D = createNoise2D();
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87CEEB);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.rotation.order = 'YXZ'; 
+scene.fog = new THREE.Fog(0x87CEEB, 20, 80); // Fog hides the edge of the world
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(1);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(5, 10, 7);
+scene.add(light, new THREE.AmbientLight(0xffffff, 0.5));
 
-// --- 2. Chunk Management System ---
+// --- 2. Voxel Data & Mesh Logic ---
 const CHUNK_SIZE = 16;
-const RENDER_DISTANCE = 3; // Number of chunks around player
-const chunks = new Map(); // Key: "x,z", Value: THREE.Group
-const worldData = {};    // Key: "x,y,z", Value: type
+const worldData = new Map();
 
-const geometry = new THREE.BoxGeometry(1, 1, 1);
-const grassMat = new THREE.MeshStandardMaterial({ color: 0x3d9e3d });
-const dirtMat = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+// Helper to get block type at coordinates
+const getBlock = (x, y, z) => worldData.get(`${x},${y},${z}`);
 
-function getChunkCoords(x, z) {
-    return {
-        cx: Math.floor(x / CHUNK_SIZE),
-        cz: Math.floor(z / CHUNK_SIZE)
-    };
-}
+function buildChunkMesh(cx, cz) {
+    const positions = [];
+    const normals = [];
+    const indices = [];
+    let vertexCount = 0;
 
-function generateChunk(cx, cz) {
-    const chunkKey = `${cx},${cz}`;
-    if (chunks.has(chunkKey)) return;
+    // 1. Generate local data for the chunk
+    for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+            const worldX = cx * CHUNK_SIZE + x;
+            const worldZ = cz * CHUNK_SIZE + z;
+            const height = Math.floor(noise2D(worldX / 20, worldZ / 20) * 10) + 10;
+            
+            for (let y = 0; y <= height; y++) {
+                worldData.set(`${worldX},${y},${worldZ}`, y === height ? 1 : 2);
+            }
+        }
+    }
 
-    const chunkGroup = new THREE.Group();
-    
+    // 2. Build geometry only for EXPOSED faces (Face Culling)
     for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
             const worldX = cx * CHUNK_SIZE + x;
             const worldZ = cz * CHUNK_SIZE + z;
             
-            // Terrain noise
-            const noiseValue = noise2D(worldX / 20, worldZ / 20);
-            const height = Math.floor(noiseValue * 5) + 5;
+            for (let y = 0; y < 30; y++) {
+                if (!getBlock(worldX, y, worldZ)) continue;
 
-            for (let y = 0; y <= height; y++) {
-                worldData[`${worldX},${y},${worldZ}`] = (y === height) ? 'grass' : 'dirt';
+                // Define the 6 possible neighbors
+                const neighbors = [
+                    { dir: [0, 1, 0], n: [0, 1, 0], corners: [[0,1,1], [1,1,1], [0,1,0], [1,1,0]] }, // Top
+                    { dir: [0, -1, 0], n: [0, -1, 0], corners: [[0,0,0], [1,0,0], [0,0,1], [1,0,1]] }, // Bottom
+                    { dir: [1, 0, 0], n: [1, 0, 0], corners: [[1,0,1], [1,0,0], [1,1,1], [1,1,0]] }, // Right
+                    { dir: [-1, 0, 0], n: [-1, 0, 0], corners: [[0,0,0], [0,0,1], [0,1,0], [0,1,1]] }, // Left
+                    { dir: [0, 0, 1], n: [0, 0, 1], corners: [[0,0,1], [1,0,1], [0,1,1], [1,1,1]] }, // Front
+                    { dir: [0, 0, -1], n: [0, 0, -1], corners: [[1,0,0], [0,0,0], [1,1,0], [0,1,0]] }, // Back
+                ];
+
+                for (const { dir, n, corners } of neighbors) {
+                    if (!getBlock(worldX + dir[0], y + dir[1], worldZ + dir[2])) {
+                        // Add face
+                        corners.forEach(c => {
+                            positions.push(worldX + c[0], y + c[1], worldZ + c[2]);
+                            normals.push(...n);
+                        });
+                        indices.push(vertexCount, vertexCount + 1, vertexCount + 2, vertexCount + 2, vertexCount + 1, vertexCount + 3);
+                        vertexCount += 4;
+                    }
+                }
             }
-
-            // Render logic (simplified face culling for performance)
-            const y = height; 
-            const block = new THREE.Mesh(geometry, grassMat);
-            block.position.set(worldX, y, worldZ);
-            chunkGroup.add(block);
         }
     }
 
-    scene.add(chunkGroup);
-    chunks.set(chunkKey, chunkGroup);
-}
-
-function updateChunks(playerX, playerZ) {
-    const { cx, cz } = getChunkCoords(playerX, playerZ);
-
-    // Load new chunks
-    for (let x = -RENDER_DISTANCE; x <= RENDER_DISTANCE; x++) {
-        for (let z = -RENDER_DISTANCE; z <= RENDER_DISTANCE; z++) {
-            generateChunk(cx + x, cz + z);
-        }
-    }
-
-    // Unload far chunks
-    for (const [key, group] of chunks) {
-        const [ccx, ccz] = key.split(',').map(Number);
-        if (Math.abs(ccx - cx) > RENDER_DISTANCE || Math.abs(ccz - cz) > RENDER_DISTANCE) {
-            scene.remove(group);
-            chunks.delete(key);
-        }
-    }
-}
-
-// --- 3. Player Physics & Loop ---
-const player = {
-    pos: new THREE.Vector3(8, 20, 8),
-    vel: new THREE.Vector3(0, 0, 0),
-    onGround: false
-};
-
-const keys = {};
-window.addEventListener('keydown', (e) => keys[e.code] = true);
-window.addEventListener('keyup', (e) => keys[e.code] = false);
-window.addEventListener('mousedown', () => document.body.requestPointerLock());
-
-let yaw = 0, pitch = 0;
-window.addEventListener('mousemove', (e) => {
-    if (document.pointerLockElement) {
-        yaw -= e.movementX * 0.002;
-        pitch -= e.movementY * 0.002;
-        pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
-        camera.rotation.set(pitch, yaw, 0);
-    }
-});
-
-function updatePhysics() {
-    const speed = 0.15;
-    const gravity = -0.01;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geometry.setIndex(indices);
     
-    // Movement
-    let moveX = 0, moveZ = 0;
-    if (keys['KeyW']) moveZ -= 1;
-    if (keys['KeyS']) moveZ += 1;
-    if (keys['KeyA']) moveX -= 1;
-    if (keys['KeyD']) moveX += 1;
-
-    const moveDir = new THREE.Vector3(moveX, 0, moveZ)
-        .applyAxisAngle(new THREE.Vector3(0,1,0), yaw)
-        .normalize()
-        .multiplyScalar(speed);
-
-    player.pos.add(moveDir);
-    player.vel.y += gravity;
-    player.pos.y += player.vel.y;
-
-    // Floor collision (Simple)
-    const floorY = 10; // Placeholder for real collision logic
-    if (player.pos.y < floorY) {
-        player.pos.y = floorY;
-        player.vel.y = 0;
-        player.onGround = true;
-    }
-
-    if (keys['Space'] && player.onGround) {
-        player.vel.y = 0.2;
-        player.onGround = false;
-    }
-
-    camera.position.copy(player.pos);
-    updateChunks(player.pos.x, player.pos.z);
+    const material = new THREE.MeshStandardMaterial({ color: 0x55aa55 });
+    const mesh = new THREE.Mesh(geometry, material);
+    scene.add(mesh);
 }
+
+// Build initial area
+for(let x = -1; x <= 1; x++) for(let z = -1; z <= 1; z++) buildChunkMesh(x, z);
+
+camera.position.set(8, 25, 30);
+camera.lookAt(8, 15, 8);
 
 function animate() {
     requestAnimationFrame(animate);
-    updatePhysics();
     renderer.render(scene, camera);
 }
 animate();
